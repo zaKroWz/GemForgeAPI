@@ -1119,6 +1119,7 @@ StatusEffect.CreateStatusEffect<Se_C_Slow>(target, owner, 2.0f);
 
 // Stun
 StatusEffect.CreateStatusEffect<Se_C_Stun>(target, owner, 1.5f);
+```
 
 #### Common Status Effects
 
