@@ -165,6 +165,145 @@ Copy `GemForgeCore.cs` to your project.
 }
 ```
 
+5. **Create a ModBehaviour class to implement your gems later:**
+
+```csharp
+using GemForge;
+using UnityEngine;
+using IngameDebugConsole;
+using Mirror;
+using System.Collections.Generic;
+
+public class YourModName : ModBehaviour
+{
+    // ===== CONFIGURATION - FILL THIS IN =====
+    private static readonly List<GemInfo> GEMS = new List<GemInfo>
+    {
+        new GemInfo
+        {
+            GemType = typeof(Gem_E_YourFirstGem),
+            UniqueGuid = "yourmodname-gem-e-firstgem-guid",
+            Name = "First Gem",
+            ShortDescription = "Does something cool",
+            Description = "Deal <color=#ff8888>25% bonus damage</color>.",
+            Rarity = Rarity.Epic,
+            Memory = "First of many.",
+            Template = "Empowered {0}"
+        },
+        // Add more gems here:
+        // new GemInfo { GemType = typeof(Gem_E_SecondGem), UniqueGuid = "yourmodname-gem-e-secondgem-guid", ... }
+    };
+    // ===== END CONFIGURATION =====
+
+    private void Awake()
+    {
+        GemForgeAPI.Initialize("com.yourname.yourmodname");  // CHANGE THIS UNIQUE ID
+        
+        RegisterAllGems();
+        RegisterDebugCommands();
+        
+        Debug.Log($"[YourModName] Loaded {GEMS.Count} gems successfully!");
+    }
+
+    private void RegisterAllGems()
+    {
+        foreach (var gemInfo in GEMS)
+        {
+            try
+            {
+                var def = new GemDefinition
+                {
+                    Guid = gemInfo.UniqueGuid,
+                    AssetId = GemDefinition.GenerateAssetId(gemInfo.UniqueGuid),
+                    Rarity = gemInfo.Rarity,
+                    ExcludeFromPool = false,
+                    Name = gemInfo.Name,
+                    ShortDescription = gemInfo.ShortDescription,
+                    Description = gemInfo.Description,
+                    Memory = gemInfo.Memory,
+                    Template = gemInfo.Template,
+                    IconTexture = GetSafeFallbackIcon()
+                };
+
+                GemForgeAPI.RegisterGem(gemInfo.GemType, def);
+                Debug.Log($"[SUCCESS] {gemInfo.Name} registered!");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[FAILED] {gemInfo.Name}: {e.Message}");
+            }
+        }
+    }
+
+    private void RegisterDebugCommands()
+    {
+        foreach (var gemInfo in GEMS)
+        {
+            string cmdName = $"spawn_{gemInfo.Name.ToLower().Replace(" ", "")}";
+            DebugLogConsole.AddCommand(cmdName, $"Spawn {gemInfo.Name}", 
+                (int q) => SpawnGem(gemInfo.GemType, q));
+        }
+        DebugLogConsole.AddCommand("checkgems", "Check all gems", CheckAllGems);
+    }
+
+    private static void SpawnGem(System.Type gemType, int quality)
+    {
+        if (!NetworkServer.active) { Debug.LogWarning("Must be host"); return; }
+        
+        var hero = DewPlayer.local?.hero;
+        if (hero == null) { Debug.LogWarning("No hero"); return; }
+
+        quality = Mathf.Clamp(quality, 0, 100);
+        var prefab = DewResources.GetByType(gemType);
+        
+        if (prefab == null) { Debug.LogError($"No prefab: {gemType.Name}"); return; }
+
+        var gem = Dew.CreateGem(prefab, hero.position + hero.transform.forward * 2f, quality, DewPlayer.local);
+        if (gem != null)
+            Debug.Log($"✨ Spawned {gemType.Name} (Q:{quality})");
+    }
+
+    private static void CheckAllGems()
+    {
+        Debug.Log("=== GEM REGISTRATION ===");
+        var db = DewResources.database;
+        foreach (var gemInfo in GEMS)
+        {
+            bool ok = db.allGuids?.Contains(gemInfo.UniqueGuid) ?? false;
+            Debug.Log($"{gemInfo.Name}: {(ok ? "✅" : "❌")}");
+        }
+    }
+
+    private static Texture2D GetSafeFallbackIcon()
+    {
+        string[] fallbacks = { "Gem_C_Efficiency", "Gem_C_Vampirism", "Gem_E_Expression" };
+        foreach (string name in fallbacks)
+        {
+            try
+            {
+                var gem = DewResources.GetByShortTypeName<Gem>(name);
+                if (gem?.icon?.texture != null) return gem.icon.texture;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    // Simple data class - don't touch this
+    private class GemInfo
+    {
+        public System.Type GemType;
+        public string UniqueGuid;
+        public string Name;
+        public string ShortDescription;
+        public string Description;
+        public Rarity Rarity = Rarity.Epic;
+        public string Memory;
+        public string Template;
+    }
+}
+```
+
 ---
 
 ## Your First Gem
@@ -176,109 +315,154 @@ using DewInternal;
 using GemForge;
 using UnityEngine;
 
-public class Gem_E_Expression : GemForgeGem
+public class Gem_E_TestEssence : GemForgeGem
 {
-    // Constants for your gem's behavior
-    private const float BASE_BONUS_PERCENT = 0.20f;
-    private const float QUALITY_SCALING = 0.001f;
-    
-    private static readonly ElementalType[] AVAILABLE_ELEMENTS = new[]
-    {
-        ElementalType.Fire,
-        ElementalType.Cold,
-        ElementalType.Light,
-        ElementalType.Dark
-    };
-
-    private static readonly System.Random _rng = new System.Random();
+    private const float BONUS_MULT = 0.30f; // 30% bonus
 
     protected override void OnDealDamage(EventInfoDamage info)
     {
         base.OnDealDamage(info);
-
-        // ALWAYS check server-side
         if (!isServer) return;
-        
-        // Prevent infinite recursion
         if (info.chain.DidReact(this)) return;
-        
-        // Only trigger on enemies
         if (!owner.CheckEnemyOrNeutral(info.victim)) return;
 
-        // Calculate bonus damage
         float totalDamage = info.damage.amount + info.damage.discardedAmount;
-        float bonusDamage = totalDamage * (BASE_BONUS_PERCENT + quality * QUALITY_SCALING);
+        float bonusDamage = totalDamage * BONUS_MULT;
 
-        // Create elemental damage
-        ElementalType randomElement = AVAILABLE_ELEMENTS[_rng.Next(AVAILABLE_ELEMENTS.Length)];
-        
-        DamageData bonusDamageData = MagicDamage(bonusDamage, 1.0f);
-        bonusDamageData.SetElemental(randomElement);
-        bonusDamageData.SetSourceType(info.damage.type);
+        DamageData bonus = MagicDamage(bonusDamage, 1.0f);
+        //bonus.SetElemental(ElementalType.Fire);
+        bonus.SetSourceType(info.damage.type);
+        bonus.Dispatch(info.victim, info.chain.New(this));
 
-        // Dispatch with chain to prevent loops
-        bonusDamageData.Dispatch(info.victim, info.chain.New(this));
-
-        NotifyUse(); // Track usage for statistics
+        NotifyUse();
     }
 }
 ```
 
 ### Step 2: Register the Gem
 
-```csharp
-using GemForge;
-using UnityEngine;
+**In your ModBehaviour Class**
 
-public class ExpressionMod : ModBehaviour
+```csharp
+private void Awake()
 {
-    private void Awake()
+    GemForgeAPI.Initialize("com.zakrow.zakrowessenceexpansion");
+    RegisterGems();
+    RegisterDebugCommands();
+    Debug.Log("[zakrowessenceexpansion] Awake complete.");
+}
+}
+```
+
+```csharp
+private void RegisterGems()
+{
+    try
     {
-        // Initialize framework (once per mod)
-        GemForgeAPI.Initialize("com.yourname.expression");
-        
-        // Create gem definition
-        var definition = new GemDefinition
+        string uniqueGuid = "mygemmod-gem-e-test-v2";
+
+        // CRITICAL: Get a fallback icon BEFORE registration
+        Texture2D fallbackIcon = null;
+        try
         {
-            Guid = "mod-gem-e-expression-guid",
-            AssetId = GemDefinition.GenerateAssetId("mod-gem-e-expression-guid"),
+            // Try to grab ANY existing gem's icon as fallback
+            var existingGem = DewResources.GetByShortTypeName<Gem>("Gem_C_Efficiency");
+            if (existingGem != null && existingGem.icon != null)
+            {
+                fallbackIcon = existingGem.icon.texture;
+                Debug.Log("[Icon] Found fallback from Gem_C_Efficiency");
+            }
+        }
+        catch { /* Ignore fallback failures */ }
+
+        var def = new GemDefinition
+        {
+            Guid = uniqueGuid,
+            AssetId = GemDefinition.GenerateAssetId(uniqueGuid),
             Rarity = Rarity.Epic,
             ExcludeFromPool = false,
-            
-            Name = "Expression",
-            ShortDescription = "Adds random elemental damage",
-            Description = 
-                "Deal <color=#ff8888>20% bonus damage</color> as a " +
-                "<color=#88ff88>random element</color>.\n\n" +
-                "Elements: Fire, Cold, Lightning, Poison, Light, Dark",
-            Memory = "Chaos finds form in the elements.",
-            Template = "Expressive {0}",
-            
-            IconTexture = LoadIcon()
+            Name = "Test Essence",
+            ShortDescription = "Adds bonus magic damage",
+            Description = "Deal <color=#ff8888>30% bonus magic damage</color>.",
+            Memory = "The first spark of creation.",
+            Template = "Empowered {0}",
+            IconTexture = fallbackIcon  // THIS IS REQUIRED
         };
 
-        // Register
-        GemForgeAPI.RegisterGem<Gem_E_Expression>(definition);
-        
-        Debug.Log("[Expression] Loaded successfully!");
+        GemForgeAPI.RegisterGem<Gem_E_TestEssence>(def);
+        Debug.Log($"[SUCCESS] Test Essence registered with fallback icon: {(fallbackIcon != null)}");
     }
-
-    private Texture2D LoadIcon()
+    catch (System.Exception e)
     {
-        // Try to load custom icon
-        string iconPath = System.IO.Path.Combine(instance.mod.path, "Gem_E_Expression.png");
+        Debug.LogError($"[REGISTRATION FAILED] {e.Message}");
+    }
+}
+```
+
+```csharp
+private Texture2D LoadSafeIcon()
+{
+    try
+    {
+        // Try custom icon first
+        string iconPath = System.IO.Path.Combine(instance.mod.path, "TestGem.png");
         if (System.IO.File.Exists(iconPath))
         {
-            byte[] data = System.IO.File.ReadAllBytes(iconPath);
+            byte[] iconData = System.IO.File.ReadAllBytes(iconPath);
             Texture2D texture = new Texture2D(2, 2);
-            texture.LoadImage(data);
+            //ImageConversionModule.LoadImage(texture, iconData);
             texture.filterMode = FilterMode.Bilinear;
             return texture;
         }
-        
-        // Fallback to default
-        return DewResources.GetByShortTypeName<Gem>("Gem_C_Efficiency")?.icon?.texture;
     }
+    catch (System.Exception e)
+    {
+        Debug.LogWarning($"[Icon] Failed to load custom icon: {e.Message}");
+    }
+
+    // Safe fallback to ANY existing gem
+    return DewResources.GetByShortTypeName<Gem>("Gem_C_Efficiency")?.icon?.texture;
+}
+```
+
+**Add Debugging Tools**
+
+```csharp
+private void RegisterDebugCommands()
+{
+    DebugLogConsole.AddCommand("spawn_testgem", "Spawn Test Essence", (int quality) => SpawnTestGem(quality));
+}
+```
+
+```csharp
+private static void SpawnTestGem(int quality)
+{
+    if (!NetworkServer.active)
+    {
+        Debug.LogWarning("Must be host/server");
+        return;
+    }
+
+    var hero = DewPlayer.local?.hero;
+    if (hero == null) return;
+
+    quality = Mathf.Clamp(quality, 0, 100);
+
+    var prefab = DewResources.GetByType<Gem_E_TestEssence>();
+    if (prefab == null)
+    {
+        Debug.LogError("Test Essence prefab not found!");
+        return;
+    }
+
+    var gem = Dew.CreateGem(
+        prefab,
+        hero.position + hero.transform.forward * 2f,
+        quality,
+        DewPlayer.local);
+
+    if (gem != null)
+        Debug.Log($"Spawned Test Essence with quality {quality}");
 }
 ```
 
