@@ -351,7 +351,6 @@ private void Awake()
     RegisterDebugCommands();
     Debug.Log("[zakrowessenceexpansion] Awake complete.");
 }
-}
 ```
 
 ```csharp
