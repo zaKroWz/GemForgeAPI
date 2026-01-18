@@ -73,14 +73,14 @@ public class VampirismMod : ModBehaviour
 
 - **Game:** Shape of Dreams (Steam version)
 - **IDE:** Visual Studio 2022, VS Code, or Rider
-- **.NET SDK:** .NET Framework 4.7.2
+- **.NET SDK:** .NET Framework 4.8
 
 ### Project Setup
 
 1. **Create a new Class Library project:**
 
 ```bash
-dotnet new classlib -n YourModName -f net472
+dotnet new classlib -n YourModName -f net4.8
 ```
 
 2. **Edit your `.csproj`:**
@@ -88,7 +88,7 @@ dotnet new classlib -n YourModName -f net472
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFramework>net4.8</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     
@@ -186,8 +186,6 @@ public class Gem_E_Expression : GemForgeGem
     {
         ElementalType.Fire,
         ElementalType.Cold,
-        ElementalType.Lightning,
-        ElementalType.Poison,
         ElementalType.Light,
         ElementalType.Dark
     };
@@ -290,11 +288,6 @@ public class ExpressionMod : ModBehaviour
 dotnet build
 ```
 
-In-game console (`~` or `F1`):
-```
-giveitem Gem_E_Expression 100
-```
-
 ---
 
 ## Gem Lifecycle & Hooks
@@ -325,7 +318,7 @@ All hooks are **virtual methods** you override in your gem class:
 
 #### Combat Hooks
 
-| Hook | When Called | Use For |
+| Hook | Called When | Use For |
 |------|-------------|---------|
 | `OnDealDamage(EventInfoDamage)` | Your skill damages an enemy | Bonus damage, effects on hit |
 | `OnTakeDamage(EventInfoDamage)` | Owner takes damage | Counter-attacks, damage reduction |
@@ -334,7 +327,7 @@ All hooks are **virtual methods** you override in your gem class:
 
 #### Skill Hooks
 
-| Hook | When Called | Use For |
+| Hook | Called When | Use For |
 |------|-------------|---------|
 | `OnEquipSkill(SkillTrigger)` | Gem equipped to skill | AoE expansion, stat mods |
 | `OnUnequipSkill(SkillTrigger)` | Gem removed from skill | Cleanup, restore values |
@@ -344,7 +337,7 @@ All hooks are **virtual methods** you override in your gem class:
 
 #### Utility Hooks
 
-| Hook | When Called | Use For |
+| Hook | Called When | Use For |
 |------|-------------|---------|
 | `OnQualityChange(int, int)` | Quality updated | Quality-dependent logic |
 | `OnPickup(Hero)` | Player picks up gem | First-time effects |
@@ -376,6 +369,36 @@ base.OnDealDamage(info);
 ---
 
 ## Common Patterns
+
+### Pattern: Quality Scaling
+
+Scale effects with gem quality:
+
+```csharp
+private const float BASE_BONUS = 0.10f;      // 10% at quality 0
+private const float QUALITY_SCALING = 0.002f; // +0.2% per quality
+
+private float GetBonusMultiplier()
+{
+    // At quality 100: 10% + (100 * 0.2%) = 30%
+    return BASE_BONUS + (quality * QUALITY_SCALING);
+}
+
+protected override void OnDealDamage(EventInfoDamage info)
+{
+    base.OnDealDamage(info);
+    if (!isServer) return;
+    if (info.chain.DidReact(this)) return;
+
+    float totalDamage = info.damage.amount + info.damage.discardedAmount;
+    float bonusDamage = totalDamage * GetBonusMultiplier();
+    
+    DamageData bonus = MagicDamage(bonusDamage, 1.0f);
+    bonus.Dispatch(info.victim, info.chain.New(this));
+    
+    NotifyUse();
+}
+```
 
 ### Pattern: Bonus Damage
 
@@ -517,36 +540,6 @@ protected override void OnDealDamage(EventInfoDamage info)
         );
         NotifyUse();
     }
-}
-```
-
-### Pattern: Quality Scaling
-
-Scale effects with gem quality:
-
-```csharp
-private const float BASE_BONUS = 0.10f;      // 10% at quality 0
-private const float QUALITY_SCALING = 0.002f; // +0.2% per quality
-
-private float GetBonusMultiplier()
-{
-    // At quality 100: 10% + (100 * 0.2%) = 30%
-    return BASE_BONUS + (quality * QUALITY_SCALING);
-}
-
-protected override void OnDealDamage(EventInfoDamage info)
-{
-    base.OnDealDamage(info);
-    if (!isServer) return;
-    if (info.chain.DidReact(this)) return;
-
-    float totalDamage = info.damage.amount + info.damage.discardedAmount;
-    float bonusDamage = totalDamage * GetBonusMultiplier();
-    
-    DamageData bonus = MagicDamage(bonusDamage, 1.0f);
-    bonus.Dispatch(info.victim, info.chain.New(this));
-    
-    NotifyUse();
 }
 ```
 
@@ -757,25 +750,6 @@ protected override void OnDealDamage(EventInfoDamage info)
 
 ## Testing & Debugging
 
-### Debug Console Commands
-
-Press `~` or `F1` to open the console.
-
-**Spawn your gem:**
-```
-spawnitem Gem_E_YourGem 100
-giveitem Gem_E_YourGem 50
-```
-
-**Testing helpers:**
-```
-godmode              # Invincibility
-killall              # Kill all enemies
-spawnmob Slime      # Spawn test dummies
-fps                  # Show FPS
-toggledebug          # Debug overlay (F3)
-```
-
 ### Custom Debug Commands
 
 Add debug commands to your mod:
@@ -937,8 +911,6 @@ public enum ElementalType
     Physical,   // No element
     Fire,       // Burns
     Cold,       // Slows/Freezes
-    Lightning,  // Chains
-    Poison,     // DoT
     Light,      // Holy damage
     Dark        // Unholy damage
 }
@@ -965,10 +937,6 @@ StatusEffect.CreateStatusEffect<Se_C_Slow>(target, owner, 2.0f);
 // Stun
 StatusEffect.CreateStatusEffect<Se_C_Stun>(target, owner, 1.5f);
 
-// Poison
-StatusEffect.CreateStatusEffect<Se_C_Poison>(target, owner, 10.0f);
-```
-
 #### Common Status Effects
 
 | Type | Effect | Good For |
@@ -977,7 +945,6 @@ StatusEffect.CreateStatusEffect<Se_C_Poison>(target, owner, 10.0f);
 | `Se_C_Freeze` | Frozen in place | Hard CC |
 | `Se_C_Slow` | Movement slow | Soft CC |
 | `Se_C_Stun` | Cannot act | Hard CC |
-| `Se_C_Poison` | Poison DoT | Damage over time |
 | `Se_C_Bleed` | Physical DoT | Bleed effects |
 
 ### Physics & Targeting
@@ -1189,7 +1156,7 @@ if (DewSave.profileStats?.gems != null)
 ### Build Errors
 
 **CS7069 (ReadOnlySpan):**
-- Check `<TargetFramework>net472</TargetFramework>`
+- Check `<TargetFramework>net4.8</TargetFramework>`
 
 **CS0012 (SerializedScriptableObject):**
 - Add Sirenix.Serialization.dll reference
@@ -1334,7 +1301,7 @@ public class DamageChain
 
 ### Complete Gem Examples
 
-All examples are available in the `/examples` folder:
+All examples WILL BE available in the `/examples` folder once I MAKE IT:
 
 1. **Vampirism** - Simple lifesteal
 2. **Expression** - Random elemental damage
@@ -1412,16 +1379,14 @@ public class TemplateMod : ModBehaviour
 
 Found a bug? Have a suggestion? Want to contribute examples?
 
-**GitHub:** https://github.com/yourname/gemforge  
-**Discord:** Shape of Dreams Modding Community
+**GitHub:** https://github.com/zaKroWz/GemForgeAPI
+**Discord:** _zakrow
 
 ---
 
 ## License
 
 GemForge is released under the MIT License. Free to use, modify, and distribute.
-
-Created with ❤️ for the Shape of Dreams modding community.
 
 ---
 
